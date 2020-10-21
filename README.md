@@ -1,2 +1,2 @@
-# Second Proj.
- The second project dealing with berries.
+Berries Project:
+The Shiny App is located at: https://ydu199.shinyapps.io/ShinyappBerries/

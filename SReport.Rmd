@@ -1,0 +1,340 @@
+---
+title: "Report"
+Name: Yu Du
+output:
+  html_document: default
+  pdf_document: default
+---
+by Yu Du
+
+1. The Introduction
+The project is designed to figure out whether the chemical applied to strawberries in states has an effect on the yield of strawberries in different locations. 
+
+2. Exploratory Data Analysis
+1). Acquire and read the data:
+The data were <a href="https://quickstats.nass.usda.gov/results/D416E96E-3D5C-324C-9334-1D38DF88FFF1">stored online</a> and then downloaded as a CSV file, and eight columns of twenty one columns which contain meaningful data are remained. 
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+library(knitr)
+library(tidyverse)
+library(magrittr)
+library(kableExtra)
+library(stats)
+library(ggplot2)
+opts_chunk$set(echo = FALSE, 
+               warning = FALSE,
+               message = FALSE)
+```
+
+```{r, echo=FALSE}
+strbb <- read_csv("/Users/duyu/Downloads/berries.csv", col_names = TRUE)
+strbb%>% summarize_all(n_distinct) -> aa
+bb <- which(aa[1,]==1)
+strbb %<>% select(-all_of(bb))
+aa %<>% select(-all_of(bb)) 
+
+strbb %<>% select(-4)
+aa %<>% select(-4) 
+#kable(head(strbb, n=)) %>% kable_styling(font_size=12)
+```
+
+2) Data Cleaning: 
+
+2a) The analysis is focused on strawberries, so the data containing the "STRAWBERRIES" commodity and "YEAR" time period are selected.
+```{r, echo=FALSE}
+strb <- strbb %>% filter((Commodity=="STRAWBERRIES") & (Period=="YEAR"))
+kable(head(strb, n=5)) %>% kable_styling(font_size=12)
+```
+
+2b).Dividing some columns with mess data into more columns, deleting unuseful colunmns, and combining these columns later to make a more organized dataset.
+```{r, echo=FALSE}
+strb %<>% select(-c(Period, Commodity)) 
+strb %<>% separate(`Data Item`, c("B","type", "means", "what"), sep = ",") 
+strb %<>% separate(`B`, c("B","lab1"), sep = "-") 
+strb %<>% select(-B)
+strb %<>% mutate(means = if_else(is.na(means), type, means))
+strb%<>%  mutate(type = str_replace(strb$type, "MEASURED IN.*$", "" ))
+strb[is.na(strb)] <- " " 
+f1 <- function(a,b){
+  if(a){
+    return(b)
+  }else{
+      return("")
+  }
+}
+index_means <- str_detect(strb$means, "UTILIZED")
+strb %<>% mutate(m_in_1 = unlist(map2(index_means, strb$means, f1)))
+strb%<>%  mutate(means = str_replace(strb$means,"UTILIZED - PRODUCTION", ""))
+
+index_what <- str_detect(strb$what, "MEASURED IN")
+strb %<>% mutate(m_in_2 = unlist(map2(index_what, strb$what, f1))) 
+strb%<>%  mutate(what = str_replace(strb$what, "MEASURED IN.*$", " " ))
+
+strb %<>% separate(Domain, c("D_left", "D_right"), sep = ", ")
+strb %<>% separate(`Domain Category`, c("DC_left", "DC_right"), sep = ", ")
+strb %<>% separate(DC_left, c("DC_left_l", "DC_left_r"), sep = ": ")
+strb %<>% separate(DC_right, c("DC_right_l", "DC_right_r"), sep = ": ")
+strb %<>% select(-DC_left_l) 
+strb%<>% select(-DC_right_l)
+
+strb[is.na(strb)] <- " "
+strb %<>% mutate(D_left = "CHEMICAL", D_left = "") 
+
+strb %<>% mutate(Chemical=paste(D_left, D_right)) 
+strb %<>% select(-c(D_left, D_right)) 
+strb %<>% select(Year, State, what, means,m_in_2,type, lab1, DC_left_r, DC_right_r, Chemical, Value,m_in_1)
+strb %<>% mutate(units= str_trim(paste(means, m_in_2))) 
+strb %<>% select(-c(means, m_in_2)) 
+
+index_type <- str_detect(strb$type, "BEARING")
+strb %<>% mutate(m_in_3 = unlist(map2(index_type, strb$type, f1))) 
+strb%<>%  mutate(type = str_replace(strb$type, "BEARING - APPLICATIONS", "" ))
+strb%<>%  mutate(type = str_replace(strb$type, "BEARING - TREATED", "" ))
+strb %<>% separate(m_in_3, c("m_left", "m_right"), sep = "- ")
+strb[is.na(strb)] <- " " 
+strb %<>% mutate(production=paste(type, lab1, m_right,m_in_1)) 
+strb %<>% select(-c(type, lab1, m_right,m_in_1)) 
+strb%<>% rename(Avg = what)
+strb%<>% rename(Chem_family = DC_left_r, Materials = DC_right_r, Measures = units)
+strb %<>% mutate(Chemical = str_trim(paste(Chem_family, Chemical)))
+strb %<>% rename(type=m_left)
+strb%<>% select(Year, State, type, production, Avg, Measures, Materials, Chemical, Value)
+
+kable(head(strb, n=5)) %>% kable_styling(font_size=12)
+```
+
+2c). Selecting the data with rows containing the real value in the last columns, therefore the remaining rows can be analyzed.
+Finalized Data Cleaning Process (before Starting the analysis on variables).
+```{r, echo=FALSE}
+strb<-strb %>% filter((Value != "(D)")&(Value !=  "(NA)"))
+#strb
+write.csv(strb, "strb.csv")
+kable(head(strb, n=5)) %>% kable_styling(font_size=12)
+```
+
+3.Selecting subset from the data to analyze on California and Florida.
+3a).Plotting the data for total yields in all states from 2015 to 2019
+```{r, echo=FALSE} 
+strbss<-strb%>% filter(Measures == "MEASURED IN CWT / ACRE")
+strbss$Value=as.numeric(strbss$Value)
+bp1 <- ggplot(strbss, aes(x =State , y = Value, fill=Year))
+bp1 <- bp1 + geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold")) +
+  labs(x = "Yield(CWT/ACRE)",y="VALUE")
+bp1
+``` 
+
+Basic Idea: try to find the relationship between chemicals and the total yield. 
+
+3b).Focusing on two main states producing strawberries in the U.S: California and Florida.
+The data below shows the total YIELD for California and Florida from year 2015 to 2019:
+The yield is measured in CWT/ACRE, therefore the total yield of California is more than twice as much as Florida has in each year . 
+```{r, echo=FALSE} 
+strbss<-strb%>% filter(Measures == "MEASURED IN CWT / ACRE")
+strbss$Value=as.numeric(strbss$Value)
+strbss %>% group_by(Year,State) %>% summarize(total_yield=sum(Value)) -> t9
+t9<-rbind(t9[which(t9$State=="CALIFORNIA"),],t9[which(t9$State=="FLORIDA"),])
+kable(head(t9, n=10)) %>% kable_styling(font_size=13)
+``` 
+
+The plot show that the total yields for two states change every year and no certain pattern in the change. However, noticed from the plots, the total yield has a small change between every year within one state. (Measured in CWT/ACRE)
+```{r, echo=FALSE}
+#png("output1.png")
+strbs<-strb%>% filter(Measures == "MEASURED IN CWT / ACRE")
+strbs$Value=as.numeric(strbs$Value)
+strbs1<-strbs[which(strbs$State=="CALIFORNIA"),]
+strbs2<-strbs[which(strbs$State=="FLORIDA"),]
+strbs3<-rbind(strbs1,strbs2)
+bp2 <- ggplot(strbs3, aes(x =Year , y = Value, fill=State))
+bp2 <- bp2 + geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1),
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold")) +
+  labs(x = "Yield(CWT/ACRE)",y="VALUE")
+bp2
+#dev.off()
+``` 
+
+3b). Choosing only one measure and one type of chemical in the data: Looking for whether the chemical has a large effect on yield for California and Florida.
+Find the difference between the total values states consumed on planting strawberries.Here, choosing only the "MEASURE IN LB/ ACRE/YEAR" measure.
+
+First, selecting the "INSECTICIDE" Chemical to calculate the total each state consumed in each year.
+
+The reason I choose to analyze on California and Florida:
+Some states' are not given in the data, you can see later in the process of analysis. As here, INSECTICIDE only shows for California and Florida. 
+Besides, California and Florida are the top two strawberry producing states within the U.S.
+
+```{r, echo=FALSE} 
+#ONlY INSECTICIDE FOR California and Florida.
+strbc1<-strb%>% filter(Measures == "MEASURED IN LB / ACRE / YEAR")
+strbc2<-strbc1%>% filter(Chemical == "INSECTICIDE")
+strbc2$Value=as.numeric(strbc2$Value)
+#strbc
+#kable(head(strbc2, n=12)) %>% kable_styling(font_size=12)
+strbc2 %>% group_by(Year,State) %>% summarize(total=sum(Value)) -> t1
+kable(head(t1, n=5)) %>% kable_styling(font_size=12)
+``` 
+
+The Result from calculation shows that California and Florida used INSECTICIDE in planting strawberries in year 2016,2018,2019.No given data for year 2015 and 2017 and no given data about Florida in year 2018. Noticed that, in each year, the total INSECTICIDE California used on planting strawberries is much larger than the total Florida used. The difference between each year within the same state is similar.
+```{r, echo=FALSE}
+bp5 <- ggplot(t1, aes(x =Year , y = total, fill=State))
+bp5 <- bp5 + geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1),
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold")) +
+  labs(x = "Yield(CWT/ACRE)",y="VALUE")
+bp5
+```
+Based on the steps above, raising an assumption that the chemical applied to Strawberries might have an effect on increasing the yields in California and Florida, and starting to look at the data about more types of Chemicals to see if the analysis can be processed.
+
+```{r, echo=FALSE}
+library(ggplot2)
+t11<-t1[which(t1$State=="CALIFORNIA"),]
+t12<-t1[which(t1$State=="FLORIDA"),]
+plot<-ggplot()+geom_point(data=t11,aes(x=Year,y=total),color="black")+geom_point(data=t12,aes(x=Year,y=total),color="blue")
+#plot+labs(x="Year",y="Total Value")
+```
+
+Second, selecting the "FUNGICIDE" Chemical to calculate the total each state consumed in each year. Based on the previous calculation and plots, now figuring out if still California used more than Florida did. First, checking how many states containing the data for "FUNGICIDE".
+
+```{r, echo=FALSE}
+strbd<-strb%>% filter(Measures == "MEASURED IN LB / ACRE / YEAR")
+strbd<-strbd%>% filter(Chemical == "FUNGICIDE")
+strbd$Value=as.numeric(strbd$Value)
+#kable(head(strbd, n=12)) %>% kable_styling(font_size=12)
+``` 
+
+
+```{r, echo=FALSE}
+strbd %>% group_by(Year,State) %>% summarize(total1=sum(Value)) -> t2
+bp6 <- ggplot(t2, aes(x =Year , y = total1, fill=State))
+bp6 <- bp6 + geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1),
+        axis.text = element_text(size = 10),
+        axis.title = element_text(size = 10, face = "bold")) +
+  labs(x = "LB/ACRE/Year)",y="VALUE")
+bp6
+t22<-t2%>% filter(State!= "WASHINGTON")  
+#t22
+#kable(head(t22, n=6)) %>% kable_styling(font_size=12)
+```
+Showing 3 states. Therefore, removing the data for Washingtown.
+
+The result from the Calculation shows that the total in "FUNGICIDE" California used on planting strawberries is much larger than the total Florida used, same as the result from calculating "INSECTICIDE". However, from year 2016 to 2019(noticing no rows of Year 2017 in the data), the difference between two states become larger. Besides, Florida used almost the same total value on year 2018, 2019, but the total value of California makes a big change from year 2016 to 2019.
+
+The total FUNGICIDE of California is more than twice as much as Florida has in each year, which seems to correspond with the observation on the total yields between two states analyzed above.
+
+
+```{r, echo=FALSE}
+library(ggplot2)
+t221<-t22[which(t22$State=="CALIFORNIA"),]
+t222<-t22[which(t22$State=="FLORIDA"),]
+plot<-ggplot()+geom_point(data=t221,aes(x=Year,y=total1),color="black")+geom_point(data=t222,aes(x=Year,y=total1),color="blue")
+#plot+labs(x="Year",y="Total Value")
+
+bp3 <- ggplot(t22, aes(x =Year , y = total1, fill=State))
+bp3 <- bp3 + geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold")) +
+  labs(x = "LB/ACRE/Year)",y="VALUE")
+bp3
+
+```
+
+Next, selecting the "HERBICIDE" Chemical to calculate the total California and Florida consumed in each year. The result shows that only California used HERBICIDE in year 2016, 2017, 2019. The total California used is decreasing.
+```{r, echo=FALSE}
+strbe<-strb%>% filter(Measures == "MEASURED IN LB / ACRE / YEAR")
+strbe<-strbe%>% filter(Chemical == "HERBICIDE")
+strbe$Value=as.numeric(strbe$Value)
+#strbe
+#kable(head(strbe, n=12)) %>% kable_styling(font_size=12)
+``` 
+
+No given data for Florida. Using the code to find out that the column State only contains California:
+```{r, echo=FALSE}
+strbe %>% group_by(Year,State) %>% summarize(total=sum(Value)) -> t3
+t33<-t3%>%filter(State=="CALIFORNIA")
+#kable(head(t33)) %>% kable_styling(font_size=12)
+t33$State%>%unique()
+```
+
+```{r, echo=FALSE}
+library(ggplot2)
+plot3<-ggplot(data=t33,aes(x =Year, y =total))
+#plot3+labs(x="Year",y="Total Value")+geom_point() 
+```
+Last, selecting the "OTHER" Chemical to calculate the total California and Florida consumed in each year. The result shows that only California used not specified chemical in year 2016, 2017, 2019. The total California used is decreasing from year 2016 to 2018, then is increasing a lot from 2018 to 2019.
+
+BUT still,no given data for Florida.
+```{r, echo=FALSE}
+strbf<-strb%>% filter(Measures == "MEASURED IN LB / ACRE / YEAR")
+strbf<-strbf%>% filter(Chemical == "OTHER")
+strbf$Value=as.numeric(strbf$Value)
+#strbf
+#kable(head(strbf, n=12)) %>% kable_styling(font_size=12)
+strbf %>% group_by(Year,State) %>% summarize(total=sum(Value)) -> t4
+#kable(head(t4, n=12)) %>% kable_styling(font_size=12)
+t4$State%>%unique()
+``` 
+
+
+```{r, echo=FALSE}
+library(ggplot2)
+plot4<-ggplot(data=t4,aes(x =Year, y =total))
+#plot4+labs(x="Year",y="Total Value")+geom_point() 
+```
+
+4).Now, looking at the relationship between total yield and using chemical FUNGIFIDE on strawberries in California and Florida from year 2018 to 2019.
+
+4a).Selecting the subset: shows the total value of FUNGICIDE used.
+```{r, echo=FALSE}
+t23<-t22%>% filter(Year!="2016")
+kable(head(t23, n=4)) %>% kable_styling(font_size=12)
+#t23
+``` 
+
+4b). Selecting another subset: shows the total yield.
+```{r, echo=FALSE}
+t63<-t9%>% filter(Year!="2016")
+t63<-t63%>% filter(Year!="2017")
+t63<-t63%>% filter(Year!="2015")
+kable(head(t63, n=4)) %>% kable_styling(font_size=12)
+#t63
+``` 
+
+4c).Combing two subsets from above. The datapoints are too fewo analyze the relationship:
+```{r, echo=FALSE}
+t7<-merge(t23,t63)
+kable(head(t7, n=4)) %>% kable_styling(font_size=12)
+
+``` 
+
+5).The Conclusion:
+The data can be selected for strawberries but the data misses a lot of information. The yield of California is more than twice as much as the yield of California.
+Also,the FUNGICIDE of California is more than twice as much as the FUNGICIDE had been used in Florida. Besides, based on the data, California used more types of chemicals on strawberries and the total value of all chemicals measured in lb/acre/year is much larger than Florida. Excluding from the factors such as weathers, the chemicals might help strawberries to yield more in two areas. 
+
+
+References：
+ Agricultural Resource Marketing Center.
+ Available at: https://www.agmrc.org/commodities-products/fruits/strawberries
+ 
+ Yihui Xie (2020). knitr: A General-Purpose Package for Dynamic Report Generation in
+  R. R package version 1.29.
+  
+ Wickham et al., (2019). Welcome to the tidyverse. Journal of Open Source Software,
+  4(43), 1686, https://doi.org/10.21105/joss.01686
+
+ Stefan Milton Bache and Hadley Wickham (2014). magrittr: A Forward-Pipe Operator for
+  R. R package version 1.5. https://CRAN.R-project.org/package=magrittr
+  
+ Hao Zhu (2020). kableExtra: Construct Complex Table with 'kable' and Pipe Syntax. R
+  package version 1.2.1. https://CRAN.R-project.org/package=kableExtra
+  
+ R Core Team (2020). R: A language and environment for statistical computing. R
+  Foundation for Statistical Computing, Vienna, Austria. URL
+  https://www.R-project.org/.
+  
+H. Wickham. ggplot2: Elegant Graphics for Data Analysis. Springer-Verlag New York,
+  2016.
